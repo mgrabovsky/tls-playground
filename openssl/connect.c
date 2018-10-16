@@ -22,6 +22,12 @@
  *      4.  Certificate and hostname verification, again not shown, is complex,
  *          unintuitive and unpredictable.
  *      5.  ...
+ *
+ * Sources:
+ * - OpenSSL's own s_client app
+ *      https://github.com/openssl/openssl/blob/OpenSSL_1_1_1/apps/s_client.c
+ * - OpenSSL certificate pinning sample program from the OWAS wiki:
+ *      https://www.owasp.org/index.php/Pinning_Cheat_Sheet#OpenSSL
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -29,13 +35,17 @@
 #include <string.h>
 
 #include <netdb.h>
-#include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
+
+#define HOST "www.example.com"
+#define PORT "443"
+
+#define BUFFER_SIZE 1024
 
 /* Rudimentary error handling -- just report where it occurred and bail. */
 #define FAIL() do { \
@@ -44,15 +54,14 @@
         goto cleanup; \
     } while (0)
 
-#define HOST "www.example.com"
-#define PORT "443"
-
-/* Sources:
- * - OpenSSL's own s_client app
- *      https://github.com/openssl/openssl/blob/OpenSSL_1_1_1/apps/s_client.c
- * - OpenSSL certificate pinning sample program from the OWAS wiki:
- *      https://www.owasp.org/index.php/Pinning_Cheat_Sheet#OpenSSL
- */
+const char *request_lines[] = {
+    "GET / HTTP/1.1\r\n",
+    "Host: " HOST "\r\n",
+    "Connection: close\r\n",
+    "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:63.0) Gecko/20100101 Firefox/63.0\r\n",
+    "\r\n",
+    NULL
+};
 
 int main(void) {
     /* Final return value of the program. */
@@ -86,11 +95,6 @@ int main(void) {
     /* Create TCP/IP socket and connect. */
     {
         BIO_ADDRINFO *result = NULL;
-
-        /* Required on Windows. */
-        if (BIO_sock_init() != 1) {
-            FAIL();
-        }
 
         if (BIO_lookup_ex(HOST, PORT, BIO_LOOKUP_CLIENT, AF_UNSPEC, SOCK_STREAM,
                     IPPROTO_TCP, &result) != 1)
@@ -177,15 +181,6 @@ int main(void) {
         FAIL();
     }
 
-    const char *request_lines[] = {
-        "GET / HTTP/1.1\r\n",
-        "Host: " HOST "\r\n",
-        "Connection: close\r\n",
-        "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:63.0) Gecko/20100101 Firefox/63.0\r\n",
-        "\r\n",
-        NULL
-    };
-
     const char **line = request_lines;
     while (*line) {
         if (SSL_write(ssl, *line, strlen(*line)) <= 0) {
@@ -194,10 +189,12 @@ int main(void) {
         ++line;
     }
 
-    char buf[1024] = { 0 };
-    SSL_read(ssl, buf, 1023);
+    char buffer[BUFFER_SIZE + 1] = { 0 };
+    if (SSL_read(ssl, buffer, BUFFER_SIZE) <= 0) {
+        FAIL();
+    }
     printf("\x1b[34mread %zu bytes:\x1b[0m\n%s\x1b[34m###\x1b[0m\n",
-            strlen(buf), buf);
+            strlen(buffer), buffer);
 
 cleanup:
     if (ssl != NULL) {

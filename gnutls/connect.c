@@ -1,6 +1,8 @@
 /**
  * The simplest SSL/TLS connection program using GnuTLS 3.5.19
  *
+ * Contains X.509 auth and basic certificate verification.
+ *
  * Sources:
  * - GnuTLS's own examples, in particular ex-client-{anon,psk,x509}.c
  *      https://github.com/gnutls/gnutls/tree/gnutls_3_5_19/doc/examples
@@ -48,7 +50,7 @@ int main(void)
     int ret  = 0;
     int sock = -1;
     gnutls_session_t session = NULL;
-    gnutls_anon_client_credentials_t creds = NULL;
+    gnutls_certificate_credentials_t creds = NULL;
 
     if (gnutls_global_init() < 0) {
         FAIL();
@@ -64,20 +66,22 @@ int main(void)
         FAIL();
     }
 
-    if (gnutls_anon_allocate_client_credentials(&creds) < 0) {
+    if (gnutls_certificate_allocate_credentials(&creds) < 0) {
         FAIL();
     }
 
-    if (gnutls_credentials_set(session, GNUTLS_CRD_ANON, creds) < 0) {
+    if (gnutls_certificate_set_x509_system_trust(creds) < 0) {
         FAIL();
     }
+
+    if (gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, creds) < 0) {
+        FAIL();
+    }
+
+    gnutls_session_set_verify_cert(session, HOST, 0);
 
     /* Set default cipher suite priorities. */
-    //if (gnutls_set_default_priority(session) < 0) {
-    const char *err;
-    if (gnutls_priority_set_direct(session, "NORMAL:SECURE:PERFORMANCE:+ANON-ECDH:+ANON-DH",
-                &err) < 0)
-    {
+    if (gnutls_set_default_priority(session) < 0) {
         FAIL();
     }
 
@@ -156,7 +160,7 @@ cleanup:
         close(sock);
     }
     if (creds != NULL) {
-        gnutls_anon_free_client_credentials(creds);
+        gnutls_certificate_free_credentials(creds);
     }
     if (session != NULL) {
         gnutls_deinit(session);

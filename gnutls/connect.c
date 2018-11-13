@@ -40,7 +40,6 @@ const char *request_lines[] = {
     "GET / HTTP/1.1\r\n",
     "Host: " HOST "\r\n",
     "Connection: close\r\n",
-    "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:63.0) Gecko/20100101 Firefox/63.0\r\n",
     "\r\n",
     NULL
 };

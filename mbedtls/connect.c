@@ -19,7 +19,7 @@
 
 #define GET_REQUEST \
     "GET / HTTP/1.1\r\n" \
-    "Host: www.example.com\r\n" \
+    "Host: " HOST "\r\n" \
     "Connection: close\r\n" \
     "\r\n"
 
@@ -134,6 +134,6 @@ cleanup:
     mbedtls_entropy_free(&entropy);
     mbedtls_net_free(&net);
 
-    return(ret);
+    return ret;
 }
 

@@ -31,21 +31,20 @@
     } while (0)
 
 int main(void) {
-    int           ret,
-                  len;
+    int           ret, len;
     unsigned char buf[1024];
 
-    mbedtls_net_context      net;
     mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context drbg;
-    mbedtls_ssl_context      ssl;
+    mbedtls_net_context      net;
     mbedtls_ssl_config       config;
+    mbedtls_ssl_context      ssl;
 
-    mbedtls_net_init(&net);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&drbg);
-    mbedtls_ssl_init(&ssl);
+    mbedtls_net_init(&net);
     mbedtls_ssl_config_init(&config);
+    mbedtls_ssl_init(&ssl);
 
     if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, NULL, 0) != 0) {
         FAIL();
@@ -127,12 +126,14 @@ int main(void) {
         printf(" %d bytes read\n\n%s", len, (char *) buf);
     } while(1);
 
+    mbedtls_ssl_close_notify(&ssl);
+
 cleanup:
-    mbedtls_ssl_config_free(&config);
     mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&config);
+    mbedtls_net_free(&net);
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
-    mbedtls_net_free(&net);
 
     return ret;
 }

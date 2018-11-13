@@ -1,7 +1,6 @@
 CC=gcc
 CFLAGS=-std=gnu11 -Wall -Wextra -pedantic
-LIBS=crypto ssl
+LDLIBS=-lssl -lcrypto
 
 connect: connect.c
-	$(CC) $(CFLAGS) -o $@ $^ $(addprefix -l,$(LIBS))
 

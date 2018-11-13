@@ -1,7 +1,6 @@
 CC=gcc
 CFLAGS=-std=gnu11 -Wall -Wextra -pedantic
-LIBS=gnutls
+LDLIBS=-lgnutls
 
 connect: connect.c
-	$(CC) $(CFLAGS) -o $@ $^ $(addprefix -l,$(LIBS))
 

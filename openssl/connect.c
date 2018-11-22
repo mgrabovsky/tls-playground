@@ -41,6 +41,7 @@
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <openssl/ocsp.h>
 #include <openssl/ssl.h>
 
 #define HOST "www.example.com"
@@ -62,6 +63,7 @@
         fprintf(stderr, "Error: %s\n", error); \
         goto cleanup; \
     } while (0)
+#define UNUSED(x) (void)(x)
 
 const char *request_lines[] = {
     "GET / HTTP/1.1\r\n",
@@ -70,6 +72,37 @@ const char *request_lines[] = {
     "\r\n",
     NULL
 };
+
+int ocsp_callback(SSL *ssl, void *param) {
+    UNUSED(param);
+
+    /* Check for certificate revocation via OCSP stapling. */
+    unsigned char *response_raw = NULL;
+    long response_len = SSL_get_tlsext_status_ocsp_resp(ssl,
+            &response_raw);
+    if (response_len == -1) {
+        fprintf(stderr, "Server did not send OCSP response.\n");
+        /* TODO: Ideally, we should now either query the OCSP server directly or
+            * try CRL if available. */
+        OPENSSL_free(response_raw);
+        return 1;
+    }
+
+    OCSP_RESPONSE *response = NULL;
+    if ((response = d2i_OCSP_RESPONSE(NULL, &response_raw, response_len)) == NULL)
+    {
+        fprintf(stderr, "Could not parse OCSP response.\n");
+        OPENSSL_free(response_raw);
+        return 1;
+    }
+
+    /* TODO: What next? Need to get certid from server certificate, then call
+     * OCSP_resp_find_status. */
+
+    OPENSSL_free(response);
+
+    return 1;
+}
 
 int main(void) {
     /* Final return value of the program. */
@@ -96,7 +129,10 @@ int main(void) {
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     SSL_CTX_set_verify_depth(ctx, 5);
     /* Use default system-wide certificate store. */
-    SSL_CTX_set_default_verify_paths(ctx);
+    OPENSSL_CHECK(SSL_CTX_set_default_verify_paths(ctx));
+    /* Request the server to send OCSP status. */
+    OPENSSL_CHECK(SSL_CTX_set_tlsext_status_type(ctx, TLSEXT_STATUSTYPE_ocsp));
+    OPENSSL_CHECK(SSL_CTX_set_tlsext_status_cb(ctx, ocsp_callback));
 
     /* Create TCP/IP socket and connect. */
     {
@@ -152,7 +188,6 @@ int main(void) {
             CUSTOM_FAIL("Server did not send certificate -- will not connect.");
         }
         X509_free(cert);
-        /* TODO: Check revocation status (CRL/OCSP). */
     }
 
     /* Check if the certificate was was verified successfully. */
@@ -168,7 +203,7 @@ int main(void) {
         ++line;
     }
 
-    /* Read the HTTP response. */
+    /* Read the HTTP response and output it onto the standard output. */
     char buffer[BUFFER_SIZE + 1] = { 0 };
     while ((ret = SSL_read(ssl, buffer, BUFFER_SIZE)) > 0) {
         fwrite(buffer, 1, ret, stdout);

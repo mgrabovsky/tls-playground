@@ -43,7 +43,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
-#define HOST "expired.badssl.com"
+#define HOST "www.example.com"
 #define PORT "443"
 
 #define BUFFER_SIZE 1024
@@ -169,11 +169,15 @@ int main(void) {
     }
 
     char buffer[BUFFER_SIZE + 1] = { 0 };
-    if (SSL_read(ssl, buffer, BUFFER_SIZE) <= 0) {
-        OPENSSL_FAIL();
+    while ((ret = SSL_read(ssl, buffer, BUFFER_SIZE)) > 0) {
+        /* Write received text onto standard output. */
+        fwrite(buffer, 1, ret, stdout);
     }
-    printf("\x1b[34mread %zu bytes:\x1b[0m\n%s\x1b[34m###\x1b[0m\n",
-            strlen(buffer), buffer);
+
+    /* Check for errors during reading. */
+    if (ret < 0 && ret != SSL_ERROR_ZERO_RETURN) {
+        CUSTOM_FAIL("An error occurred when reading from TLS channel.");
+    }
 
 cleanup:
     if (ssl != NULL) {

@@ -136,9 +136,9 @@ int main(void)
 
     /* Beware: Unusual return value. */
     if (gnutls_ocsp_status_request_is_checked(session, 0) != 0) {
-        printf("OCSP status response valid.\n");
+        fprintf(stderr, "OCSP status response valid.\n");
     } else {
-        printf("No OCSP status response or invalid.\n");
+        fprintf(stderr, "Server sent no OCSP status or it was invalid.\n");
     }
 
     const char **line = request_lines;

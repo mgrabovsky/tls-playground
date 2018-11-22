@@ -101,6 +101,8 @@ int main(void) {
         }
     }
 
+    /* TODO: Check for certificate revocation. */
+
     /* Send the HTTP request line by line. */
     const char **line = request_lines;
     while (*line) {

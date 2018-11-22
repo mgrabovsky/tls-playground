@@ -141,7 +141,9 @@ int main(void)
     gnutls_datum_t ocsp_response_raw = { 0 };
     if ((ret = gnutls_ocsp_status_request_get(session, &ocsp_response_raw)) != 0) {
         if (ret == GNUTLS_E_REQUESTED_DATA_NOT_AVAILABLE) {
-            fprintf(stderr, "Server did not send OCSP response.");
+            fprintf(stderr, "Server did not send OCSP response.\n");
+            /* TODO: Ideally, we should now either query the OCSP server directly or
+             * try CRL if available. */
         } else {
             GNUTLS_FAIL(ret);
         }

@@ -11,125 +11,134 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/debug.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/error.h>
 #include <mbedtls/net.h>
 #include <mbedtls/ssl.h>
 
 #define HOST "www.example.com"
 #define PORT "443"
 
-#define GET_REQUEST \
-    "GET / HTTP/1.1\r\n" \
-    "Host: " HOST "\r\n" \
-    "Connection: close\r\n" \
-    "\r\n"
+#define BUFFER_SIZE 1024
 
-/* Rudimentary error handling -- just report where it occurred and bail. */
-#define FAIL() do { \
-        fprintf(stderr, "Error on line %d.\n", __LINE__); \
+/* Rudimentary error handling. */
+#define MBEDTLS_FAIL(x) do { \
+        char error_buffer[500] = ""; \
+        mbedtls_strerror(x, error_buffer, 500); \
+        fprintf(stderr, "mbed TLS error (%d): %s\n", __LINE__, error_buffer); \
         ret = 1; \
         goto cleanup; \
     } while (0)
+#define MBEDTLS_CHECK(x) if ((ret = (x)) != 0) { \
+        MBEDTLS_FAIL(ret); \
+    }
+#define CUSTOM_FAIL(error) do { \
+        ret = 1; \
+        fprintf(stderr, "Error: %s\n", error); \
+        goto cleanup; \
+    } while (0)
+
+const char *request_lines[] = {
+    "GET / HTTP/1.1\r\n",
+    "Host: " HOST "\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    NULL
+};
 
 int main(void) {
-    int           ret, len;
-    unsigned char buf[1024];
+    int ret = 0;
 
     mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context drbg;
     mbedtls_net_context      net;
     mbedtls_ssl_config       config;
+    mbedtls_x509_crt         certs;
     mbedtls_ssl_context      ssl;
 
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&drbg);
     mbedtls_net_init(&net);
     mbedtls_ssl_config_init(&config);
+    mbedtls_x509_crt_init(&certs);
     mbedtls_ssl_init(&ssl);
 
-    if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, NULL, 0) != 0) {
-        FAIL();
-    }
+    MBEDTLS_CHECK(mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, NULL, 0));
 
-    /*
-     * Start the connection
-     */
-    printf("\n  . Connecting to tcp/%s/%s...", HOST, PORT);
-    fflush(stdout);
+    /* Connect to the server via TCP. */
+    MBEDTLS_CHECK(mbedtls_net_connect(&net, HOST, PORT, MBEDTLS_NET_PROTO_TCP));
 
-    if (mbedtls_net_connect(&net, HOST, PORT, MBEDTLS_NET_PROTO_TCP) != 0) {
-        FAIL();
-    }
+    /* Use some library-provided configuration defaults. */
+    MBEDTLS_CHECK(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT,
+                MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT));
 
-    printf(" ok\n");
+    /* Require TLS version at least 1.2. */
+    mbedtls_ssl_conf_min_version(&config, MBEDTLS_SSL_MAJOR_VERSION_3,
+            MBEDTLS_SSL_MINOR_VERSION_3);
 
-    if (mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT,
-                MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0)
-    {
-        FAIL();
-    }
-
-    mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_NONE);
+    /* Assign the RNG to the connection. */
     mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &drbg);
+    /* Require verification of server certificate. */
+    mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_REQUIRED);
 
-    if (mbedtls_ssl_setup(&ssl, &config) != 0) {
-        FAIL();
-    }
+    /* Use the system certificate authorities. */
+    mbedtls_x509_crt_parse_path(&certs, "/etc/ssl/certs");
+    mbedtls_ssl_conf_ca_chain(&config, &certs, NULL);
 
-    if (mbedtls_ssl_set_hostname(&ssl, HOST) != 0) {
-        FAIL();
-    }
+    MBEDTLS_CHECK(mbedtls_ssl_setup(&ssl, &config));
+    /* Set requested server host name (SNI). */ 
+    MBEDTLS_CHECK(mbedtls_ssl_set_hostname(&ssl, HOST));
 
     mbedtls_ssl_set_bio(&ssl, &net, mbedtls_net_send, mbedtls_net_recv, NULL);
 
-    /* It is not necessary to initiate the handshake explicitly. It is automatically
-     * performed on write, for instance. */
-    /*
-    if (mbedtls_ssl_handshake(&ssl) != 0) {
-        FAIL();
-    }
-    */
-
-    /* Write the GET request */
-    printf("  > Write to server:");
-    fflush(stdout);
-
-    len = sprintf((char *)buf, GET_REQUEST);
-
-    while ((ret = mbedtls_ssl_write(&ssl, buf, len)) <= 0) {
-        if (ret != 0) {
-            printf(" failed\n  ! write returned %d\n\n", ret);
-            goto cleanup;
+    /* Explicitly perform the handshake here so that we can check for certifiacte
+     * verification status. */
+    while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
+        if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            if (ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+                CUSTOM_FAIL("Server certificate verification failed.");
+            }
+            MBEDTLS_FAIL(ret);
         }
     }
 
-    len = ret;
-    printf(" %d bytes written\n\n%s", len, (char *) buf);
+    /* Send the HTTP request line by line. */
+    const char **line = request_lines;
+    while (*line) {
+        int line_length   = strlen(*line);
+        int bytes_written = 0;
+        /* mbedtls_ssl_write may perform partial writes -- we must check for these cases
+         * and call the function again if necessary. */
+        do {
+            ret = mbedtls_ssl_write(&ssl, *line + bytes_written,
+                    line_length - bytes_written);
+            if (ret <= 0) {
+                if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
+                    ret != MBEDTLS_ERR_SSL_WANT_WRITE)
+                {
+                    MBEDTLS_FAIL(ret);
+                }
+            } else {
+                bytes_written += ret;
+            }
+        } while (bytes_written < line_length);
+        ++line;
+    }
 
-    /*
-     * Read the HTTP response
-     */
-    printf("  < Read from server:");
-    fflush(stdout);
-    do {
-        len = sizeof(buf) - 1;
-        memset(buf, 0, sizeof(buf));
-        ret = mbedtls_ssl_read(&ssl, buf, len);
+    /* Read the HTTP response. */
+    char buffer[BUFFER_SIZE + 1] = { 0 };
+    while ((ret = mbedtls_ssl_read(&ssl, buffer, BUFFER_SIZE)) > 0) {
+        fwrite(buffer, 1, ret, stdout);
+    }
 
-        if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-            break;
-        } else if (ret <= 0) {
-            printf("failed\n  ! ssl_read returned %d\n\n", ret);
-            break;
-        }
-
-        len = ret;
-        printf(" %d bytes read\n\n%s", len, (char *) buf);
-    } while(1);
-
-    mbedtls_ssl_close_notify(&ssl);
+    /* Check for errors during reading. */
+    if (ret < 0 && ret != MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+        MBEDTLS_FAIL(ret);
+    }
 
 cleanup:
+    /* Clean up all resources. */
     mbedtls_ssl_free(&ssl);
+    mbedtls_x509_crt_free(&certs);
     mbedtls_ssl_config_free(&config);
     mbedtls_net_free(&net);
     mbedtls_ctr_drbg_free(&drbg);

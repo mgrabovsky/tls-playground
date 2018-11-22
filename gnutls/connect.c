@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include <gnutls/gnutls.h>
+#include <gnutls/ocsp.h>
 
 #define HOST "www.example.com"
 #define PORT "443"
@@ -72,6 +73,8 @@ int main(void)
     GNUTLS_CHECK(gnutls_certificate_set_x509_system_trust(creds));
     GNUTLS_CHECK(gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, creds));
     gnutls_session_set_verify_cert(session, HOST, 0);
+    /* Request an OCSP response from the server (OCSP stapling). (Is this default?) */
+    GNUTLS_CHECK(gnutls_ocsp_status_request_enable_client(session, NULL, 0, NULL));
 
     /* Set default cipher suite priorities. */
     GNUTLS_CHECK(gnutls_set_default_priority(session));
@@ -134,11 +137,32 @@ int main(void)
         GNUTLS_FAIL(ret);
     }
 
-    /* Beware: Unusual return value. */
-    if (gnutls_ocsp_status_request_is_checked(session, 0) != 0) {
-        fprintf(stderr, "OCSP status response valid.\n");
+    /* Parse stapled OCSP response if available. */
+    gnutls_datum_t ocsp_response_raw = { 0 };
+    if ((ret = gnutls_ocsp_status_request_get(session, &ocsp_response_raw)) != 0) {
+        if (ret == GNUTLS_E_REQUESTED_DATA_NOT_AVAILABLE) {
+            fprintf(stderr, "Server did not send OCSP response.");
+        } else {
+            GNUTLS_FAIL(ret);
+        }
     } else {
-        fprintf(stderr, "Server sent no OCSP status or it was invalid.\n");
+        gnutls_ocsp_resp_t ocsp_response = NULL;
+        GNUTLS_CHECK(gnutls_ocsp_resp_init(&ocsp_response));
+        GNUTLS_CHECK(gnutls_ocsp_resp_import(ocsp_response, &ocsp_response_raw));
+
+        gnutls_ocsp_cert_status_t status;
+        GNUTLS_CHECK(gnutls_ocsp_resp_get_single(ocsp_response, 0, NULL, NULL, NULL,
+                    NULL, &status, NULL, NULL, NULL, NULL));
+
+        if (status == GNUTLS_OCSP_CERT_GOOD) {
+            fprintf(stderr, "OCSP status good.\n");
+        } else if (status == GNUTLS_OCSP_CERT_REVOKED) {
+            fprintf(stderr, "Certificate is revoked according to stapled OCSP.\n");
+        } else {
+            fprintf(stderr, "Unknown OCSP status.\n");
+        }
+
+        gnutls_ocsp_resp_deinit(ocsp_response);
     }
 
     const char **line = request_lines;

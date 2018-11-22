@@ -24,7 +24,7 @@
 #define MBEDTLS_FAIL(x) do { \
         char error_buffer[500] = ""; \
         mbedtls_strerror(x, error_buffer, 500); \
-        fprintf(stderr, "mbed TLS error (%d): %s\n", __LINE__, error_buffer); \
+        fprintf(stderr, "mbed TLS error: %s\n", error_buffer); \
         ret = 1; \
         goto cleanup; \
     } while (0)

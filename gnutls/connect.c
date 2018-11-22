@@ -29,10 +29,18 @@
 
 #define BUFFER_SIZE 1024
 
-/* Rudimentary error handling -- just report where it occurred and bail. */
-#define FAIL() do { \
-        fprintf(stderr, "Error on line %d.\n", __LINE__); \
+/* Rudimentary error handling. */
+#define GNUTLS_FAIL(x) do { \
+        gnutls_perror(x); \
         ret = 1; \
+        goto cleanup; \
+    } while (0)
+#define GNUTLS_CHECK(x) if ((ret = (x)) < 0) { \
+        GNUTLS_FAIL(ret); \
+    }
+#define CUSTOM_FAIL(error) do { \
+        ret = 1; \
+        fprintf(stderr, "Error: %s\n", error); \
         goto cleanup; \
     } while (0)
 
@@ -51,38 +59,22 @@ int main(void)
     gnutls_session_t session = NULL;
     gnutls_certificate_credentials_t creds = NULL;
 
-    if (gnutls_global_init() < 0) {
-        FAIL();
-    }
+    GNUTLS_CHECK(gnutls_global_init());
 
     /* Initialize the SSL/TLS channel. */
-    if (gnutls_init(&session, GNUTLS_CLIENT) < 0) {
-        FAIL();
-    }
+    GNUTLS_CHECK(gnutls_init(&session, GNUTLS_CLIENT));
     
-    /* Set requested server name for virtualized servers. */
-    if (gnutls_server_name_set(session, GNUTLS_NAME_DNS, HOST, strlen(HOST)) < 0) {
-        FAIL();
-    }
+    /* Set requested server name for virtualized servers (SNI). */
+    GNUTLS_CHECK(gnutls_server_name_set(session, GNUTLS_NAME_DNS, HOST, strlen(HOST)));
 
-    if (gnutls_certificate_allocate_credentials(&creds) < 0) {
-        FAIL();
-    }
-
-    if (gnutls_certificate_set_x509_system_trust(creds) < 0) {
-        FAIL();
-    }
-
-    if (gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, creds) < 0) {
-        FAIL();
-    }
-
+    /* Verify server certificate with default certificate authorities. */
+    GNUTLS_CHECK(gnutls_certificate_allocate_credentials(&creds));
+    GNUTLS_CHECK(gnutls_certificate_set_x509_system_trust(creds));
+    GNUTLS_CHECK(gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, creds));
     gnutls_session_set_verify_cert(session, HOST, 0);
 
     /* Set default cipher suite priorities. */
-    if (gnutls_set_default_priority(session) < 0) {
-        FAIL();
-    }
+    GNUTLS_CHECK(gnutls_set_default_priority(session));
 
     /* Connect to the server. */
     {
@@ -97,7 +89,7 @@ int main(void)
         if (getaddrinfo(HOST, PORT, &hints, &result) != 0 ||
                 result == NULL)
         {
-            FAIL();
+            CUSTOM_FAIL("Could not connect to the server.");
         }
 
         struct addrinfo *rr = result;
@@ -110,49 +102,62 @@ int main(void)
         }
 
         if (sock < 0) {
-            FAIL();
+            CUSTOM_FAIL("Could not connect to the server.");
         }
 
         if (connect(sock, rr->ai_addr, rr->ai_addrlen) != 0) {
-            FAIL();
+            CUSTOM_FAIL("Could not connect to the server.");
         }
     }
 
     /* Connect the socket and TLS channel. */
     gnutls_transport_set_int(session, sock);
-    /* Most likely not necessary. */
-    //gnutls_handshake_set_timeout(session, GNUTLS_DEFAULT_HANDSHAKE_TIMEOUT);
+    /* Set default timeout for the handshake. */
+    gnutls_handshake_set_timeout(session, GNUTLS_DEFAULT_HANDSHAKE_TIMEOUT);
 
     /* Attempt the TLS handshake. Some non-fatal errors are expected during the
      * process. We'll just ignore these and try again. */
     do {
         ret = gnutls_handshake(session);
-    } while (ret < 0 && gnutls_error_is_fatal(ret) == 0);
+    } while (ret < 0 && !gnutls_error_is_fatal(ret));
 
     if (ret < 0) {
-        gnutls_perror(ret);
-        if (gnutls_error_is_fatal(ret))
-            FAIL();
+        /* Print the specific error which occurred during certificate verification. */
+        if (ret == GNUTLS_E_CERTIFICATE_VERIFICATION_ERROR) {
+            gnutls_certificate_type_t cert_type = gnutls_certificate_type_get(session);
+            unsigned status = gnutls_session_get_verify_cert_status(session);
+            gnutls_datum_t out = { 0 };
+            gnutls_certificate_verification_status_print(status, cert_type, &out, 0);
+            fprintf(stderr, "Certificate verification failed: %s\n", out.data);
+            gnutls_free(out.data);
+        }
+        GNUTLS_FAIL(ret);
+    }
+
+    /* Beware: Unusual return value. */
+    if (gnutls_ocsp_status_request_is_checked(session, 0) != 0) {
+        printf("OCSP status response valid.\n");
+    } else {
+        printf("No OCSP status response or invalid.\n");
     }
 
     const char **line = request_lines;
     while (*line) {
-        if (gnutls_record_send(session, *line, strlen(*line)) <= 0) {
-            FAIL();
-        }
+        GNUTLS_CHECK(gnutls_record_send(session, *line, strlen(*line)));
         ++line;
     }
 
+    /* Read the HTTP response and output it onto the standard output. */
     char buffer[BUFFER_SIZE + 1] = { 0 };
-    if (gnutls_record_recv(session, buffer, BUFFER_SIZE) <= 0) {
-        FAIL();
+    while ((ret = gnutls_record_recv(session, buffer, BUFFER_SIZE)) > 0) {
+        fwrite(buffer, 1, ret, stdout);
     }
-    printf("\x1b[34mread %zu bytes:\x1b[0m\n%s\x1b[34m###\x1b[0m\n",
-            strlen(buffer), buffer);
 
-    if (gnutls_bye(session, GNUTLS_SHUT_RDWR) < 0) {
-        FAIL();
+    if (ret < 0) {
+        GNUTLS_FAIL(ret);
     }
+
+    GNUTLS_CHECK(gnutls_bye(session, GNUTLS_SHUT_RDWR) < 0);
 
 cleanup:
     if (sock >= 0) {

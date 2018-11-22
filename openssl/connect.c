@@ -168,6 +168,7 @@ int main(void) {
         ++line;
     }
 
+    /* Read the HTTP response. */
     char buffer[BUFFER_SIZE + 1] = { 0 };
     while ((ret = SSL_read(ssl, buffer, BUFFER_SIZE)) > 0) {
         /* Write received text onto standard output. */

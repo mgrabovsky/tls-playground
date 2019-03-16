@@ -1,3 +1,10 @@
+/**
+ * The simplest SSL/TLS connection program using mbed TLS 2.13.0
+ *
+ * Sources:
+ * - mbed TLS tutorial:
+ *      https://tls.mbed.org/kb/how-to/mbedtls-tutorial
+ */
 #include <stdio.h>
 #include <string.h>
 

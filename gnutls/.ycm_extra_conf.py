@@ -7,6 +7,7 @@ flags = [
     '-pedantic',
     '-x', 'c',
     '-std=gnu11',
+    '-D_GNU_SOURCE',
     '-I', '.',
 ]
 

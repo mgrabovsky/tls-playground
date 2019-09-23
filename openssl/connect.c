@@ -44,7 +44,7 @@
 #include <openssl/ocsp.h>
 #include <openssl/ssl.h>
 
-#define HOST "www.example.com"
+#define DEFAULT_HOST "example.com"
 #define PORT "443"
 
 #define BUFFER_SIZE 1024
@@ -65,13 +65,11 @@
     } while (0)
 #define UNUSED(x) (void)(x)
 
-const char *request_lines[] = {
-    "GET / HTTP/1.1\r\n",
-    "Host: " HOST "\r\n",
-    "Connection: close\r\n",
-    "\r\n",
-    NULL
-};
+#define REQUEST_TEMPLATE    \
+    "GET / HTTP/1.1\r\n"    \
+    "Host: %s\r\n"          \
+    "Connection: close\r\n" \
+    "\r\n"
 
 int ocsp_callback(SSL *ssl, void *param) {
     UNUSED(param);
@@ -83,13 +81,14 @@ int ocsp_callback(SSL *ssl, void *param) {
     if (response_len == -1) {
         fprintf(stderr, "Server did not send OCSP response.\n");
         /* TODO: Ideally, we should now either query the OCSP server directly or
-            * try CRL if available. */
+         * try CRL if available. */
         OPENSSL_free(response_raw);
         return 1;
     }
 
     OCSP_RESPONSE *response = NULL;
-    if ((response = d2i_OCSP_RESPONSE(NULL, &response_raw, response_len)) == NULL)
+    if ((response = d2i_OCSP_RESPONSE(NULL, (const unsigned char **)&response_raw,
+                    response_len)) == NULL)
     {
         fprintf(stderr, "Could not parse OCSP response.\n");
         OPENSSL_free(response_raw);
@@ -104,7 +103,7 @@ int ocsp_callback(SSL *ssl, void *param) {
     return 1;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     /* Final return value of the program. */
     int ret = 0;
     /* SSL/TLS context. */
@@ -113,6 +112,26 @@ int main(void) {
     SSL *ssl = NULL;
     /* TCP/IP socket descriptor. */
     int sock = -1;
+    /* The HTTP request string. */
+    char *request = NULL;
+    /* Name of the host we're connecting to. */
+    const char *hostname = DEFAULT_HOST;
+
+    if (argc == 2) {
+        hostname = argv[1];
+    } else if (argc > 2) {
+        fprintf(stderr, "Invalid number of arguments. Expected zero or one.\n");
+        fprintf(stderr, "Usage: %s [hostname]\n", argv[0]);
+        return 1;
+    }
+
+    /* Build the request string from the template and supplied (or default) host
+     * name.
+     */
+    if (asprintf(&request, REQUEST_TEMPLATE, hostname) < 0) {
+        request = NULL;
+        CUSTOM_FAIL("Failed to allocate memory for request.");
+    }
 
     /* No explicit initialisation is needed as of OpenSSL 1.1.0. */
 
@@ -138,7 +157,7 @@ int main(void) {
     {
         BIO_ADDRINFO *result = NULL;
 
-        OPENSSL_CHECK(BIO_lookup_ex(HOST, PORT, BIO_LOOKUP_CLIENT, AF_UNSPEC,
+        OPENSSL_CHECK(BIO_lookup_ex(hostname, PORT, BIO_LOOKUP_CLIENT, AF_UNSPEC,
                     SOCK_STREAM, IPPROTO_TCP, &result));
 
         const BIO_ADDRINFO *ai = result;
@@ -166,9 +185,9 @@ int main(void) {
     }
 
     /* Set the host name for Server Name Indication. */
-    OPENSSL_CHECK(SSL_set_tlsext_host_name(ssl, HOST));
+    OPENSSL_CHECK(SSL_set_tlsext_host_name(ssl, hostname));
     /* Set the host name for certificate verification. */
-    OPENSSL_CHECK(SSL_set1_host(ssl, HOST));
+    OPENSSL_CHECK(SSL_set1_host(ssl, hostname));
 
     /* Input/output channel. */
     BIO *bio = BIO_new_socket(sock, BIO_NOCLOSE);
@@ -195,12 +214,9 @@ int main(void) {
         CUSTOM_FAIL("Could not verify server certificate.");
     }
 
-    const char **line = request_lines;
-    while (*line) {
-        if (SSL_write(ssl, *line, strlen(*line)) <= 0) {
-            OPENSSL_FAIL();
-        }
-        ++line;
+    /* Send the HTTP request to the server. */
+    if (SSL_write(ssl, request, strlen(request)) <= 0) {
+        OPENSSL_FAIL();
     }
 
     /* Read the HTTP response and output it onto the standard output. */
@@ -225,6 +241,9 @@ cleanup:
     }
     if (ctx != NULL) {
         SSL_CTX_free(ctx);
+    }
+    if (request != NULL) {
+        free(request);
     }
 
     return ret;

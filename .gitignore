@@ -1,2 +1,5 @@
 # Ignore complied binaries
 connect
+openssl
+gnutls
+mbedtls

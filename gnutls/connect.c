@@ -25,7 +25,7 @@
 #include <gnutls/gnutls.h>
 #include <gnutls/ocsp.h>
 
-#define HOST "www.example.com"
+#define DEFAULT_HOST "example.com"
 #define PORT "443"
 
 #define BUFFER_SIZE 1024
@@ -45,18 +45,40 @@
         goto cleanup; \
     } while (0)
 
-const char *request_lines[] = {
-    "GET / HTTP/1.1\r\n",
-    "Host: " HOST "\r\n",
-    "Connection: close\r\n",
-    "\r\n",
-    NULL
-};
+#define REQUEST_TEMPLATE    \
+    "GET / HTTP/1.1\r\n"    \
+    "Host: %s\r\n"          \
+    "Connection: close\r\n" \
+    "\r\n"
 
-int main(void)
-{
-    int ret  = 0;
+
+int main(int argc, char **argv) {
+    /* Final return value of the program. */
+    int ret = 0;
+
+    /* The HTTP request string. */
+    char *request = NULL;
+
+    /* Name of the host we're connecting to. */
+    const char *hostname = DEFAULT_HOST;
+
+    if (argc == 2) {
+        hostname = argv[1];
+    } else if (argc > 2) {
+        fprintf(stderr, "Invalid number of arguments. Expected zero or one.\n");
+        fprintf(stderr, "Usage: %s [hostname]\n", argv[0]);
+        return 1;
+    }
+
+    /* Build the request string from the template and supplied (or default) hostname. */
+    if (asprintf(&request, REQUEST_TEMPLATE, hostname) < 0) {
+        request = NULL;
+        CUSTOM_FAIL("Failed to allocate memory for request.");
+    }
+
+    /* TCP/IP socket descriptor. */
     int sock = -1;
+    
     gnutls_session_t session = NULL;
     gnutls_certificate_credentials_t creds = NULL;
 
@@ -66,13 +88,13 @@ int main(void)
     GNUTLS_CHECK(gnutls_init(&session, GNUTLS_CLIENT));
     
     /* Set requested server name for virtualized servers (SNI). */
-    GNUTLS_CHECK(gnutls_server_name_set(session, GNUTLS_NAME_DNS, HOST, strlen(HOST)));
+    GNUTLS_CHECK(gnutls_server_name_set(session, GNUTLS_NAME_DNS, hostname, strlen(hostname)));
 
     /* Verify server certificate with default certificate authorities. */
     GNUTLS_CHECK(gnutls_certificate_allocate_credentials(&creds));
     GNUTLS_CHECK(gnutls_certificate_set_x509_system_trust(creds));
     GNUTLS_CHECK(gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, creds));
-    gnutls_session_set_verify_cert(session, HOST, 0);
+    gnutls_session_set_verify_cert(session, hostname, 0);
     /* Request an OCSP response from the server (OCSP stapling). (Is this default?) */
     GNUTLS_CHECK(gnutls_ocsp_status_request_enable_client(session, NULL, 0, NULL));
 
@@ -89,7 +111,7 @@ int main(void)
 
         struct addrinfo *result = NULL;
 
-        if (getaddrinfo(HOST, PORT, &hints, &result) != 0 ||
+        if (getaddrinfo(hostname, PORT, &hints, &result) != 0 ||
                 result == NULL)
         {
             CUSTOM_FAIL("Could not connect to the server.");
@@ -167,11 +189,7 @@ int main(void)
         gnutls_ocsp_resp_deinit(ocsp_response);
     }
 
-    const char **line = request_lines;
-    while (*line) {
-        GNUTLS_CHECK(gnutls_record_send(session, *line, strlen(*line)));
-        ++line;
-    }
+    GNUTLS_CHECK(gnutls_record_send(session, request, strlen(request)));
 
     /* Read the HTTP response and output it onto the standard output. */
     char buffer[BUFFER_SIZE + 1] = { 0 };
@@ -194,6 +212,9 @@ cleanup:
     }
     if (session != NULL) {
         gnutls_deinit(session);
+    }
+    if (request != NULL) {
+        free(request);
     }
     gnutls_global_deinit();
 

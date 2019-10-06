@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
 
     /* TCP/IP socket descriptor. */
     int sock = -1;
-    
+
     gnutls_session_t session = NULL;
     gnutls_certificate_credentials_t creds = NULL;
 
@@ -218,6 +218,6 @@ cleanup:
     }
     gnutls_global_deinit();
 
-    return 0;
+    return ret;
 }
 

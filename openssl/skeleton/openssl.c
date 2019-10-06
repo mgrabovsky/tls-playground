@@ -1,5 +1,5 @@
 /**
- * Skeleton for PA193 homework #3, target OpenSSL ~ 1.1.1
+ * Skeleton for PA193 homework #3, target OpenSSL >= 1.1.1
  */
 #include <stdio.h>
 #include <stdlib.h>

@@ -22,7 +22,7 @@
 #include <mbedtls/net.h>
 #include <mbedtls/ssl.h>
 
-#define HOST "www.example.com"
+#define DEFAULT_HOST "example.com"
 #define PORT "443"
 
 #define BUFFER_SIZE 1024
@@ -44,16 +44,35 @@
         goto cleanup; \
     } while (0)
 
-const char *request_lines[] = {
-    "GET / HTTP/1.1\r\n",
-    "Host: " HOST "\r\n",
-    "Connection: close\r\n",
-    "\r\n",
-    NULL
-};
+#define REQUEST_TEMPLATE    \
+    "GET / HTTP/1.1\r\n"    \
+    "Host: %s\r\n"          \
+    "Connection: close\r\n" \
+    "\r\n"
 
-int main(void) {
+int main(int argc, char **argv) {
+    /* Final return value of the program. */
     int ret = 0;
+
+    /* The HTTP request string. */
+    char *request = NULL;
+
+    /* Name of the host we're connecting to. */
+    const char *hostname = DEFAULT_HOST;
+
+    if (argc == 2) {
+        hostname = argv[1];
+    } else if (argc > 2) {
+        fprintf(stderr, "Invalid number of arguments. Expected zero or one.\n");
+        fprintf(stderr, "Usage: %s [hostname]\n", argv[0]);
+        return 1;
+    }
+
+    /* Build the request string from the template and supplied (or default) hostname. */
+    if (asprintf(&request, REQUEST_TEMPLATE, hostname) < 0) {
+        request = NULL;
+        CUSTOM_FAIL("Failed to allocate memory for request.");
+    }
 
     mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context drbg;
@@ -72,7 +91,7 @@ int main(void) {
     MBEDTLS_CHECK(mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, NULL, 0));
 
     /* Connect to the server via TCP. */
-    MBEDTLS_CHECK(mbedtls_net_connect(&net, HOST, PORT, MBEDTLS_NET_PROTO_TCP));
+    MBEDTLS_CHECK(mbedtls_net_connect(&net, hostname, PORT, MBEDTLS_NET_PROTO_TCP));
 
     /* Use some library-provided configuration defaults. */
     MBEDTLS_CHECK(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT,
@@ -92,8 +111,8 @@ int main(void) {
     mbedtls_ssl_conf_ca_chain(&config, &certs, NULL);
 
     MBEDTLS_CHECK(mbedtls_ssl_setup(&ssl, &config));
-    /* Set requested server host name (SNI). */ 
-    MBEDTLS_CHECK(mbedtls_ssl_set_hostname(&ssl, HOST));
+    /* Set requested server hostname (SNI). */ 
+    MBEDTLS_CHECK(mbedtls_ssl_set_hostname(&ssl, hostname));
 
     mbedtls_ssl_set_bio(&ssl, &net, mbedtls_net_send, mbedtls_net_recv, NULL);
 
@@ -111,14 +130,12 @@ int main(void) {
     /* TODO: Check for certificate revocation. */
 
     /* Send the HTTP request line by line. */
-    const char **line = request_lines;
-    while (*line) {
-        int line_length   = strlen(*line);
+        int line_length   = strlen(request);
         int bytes_written = 0;
         /* mbedtls_ssl_write may perform partial writes -- we must check for these cases
          * and call the function again if necessary. */
         do {
-            ret = mbedtls_ssl_write(&ssl, *line + bytes_written,
+            ret = mbedtls_ssl_write(&ssl, request + bytes_written, 
                     line_length - bytes_written);
             if (ret <= 0) {
                 if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
@@ -130,8 +147,6 @@ int main(void) {
                 bytes_written += ret;
             }
         } while (bytes_written < line_length);
-        ++line;
-    }
 
     /* Read the HTTP response. */
     char buffer[BUFFER_SIZE + 1] = { 0 };
@@ -152,6 +167,10 @@ cleanup:
     mbedtls_net_free(&net);
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
+    
+    if (request != NULL) {
+        free(request);
+    }
 
     return ret;
 }

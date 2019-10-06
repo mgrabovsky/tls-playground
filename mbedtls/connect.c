@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
         /* mbedtls_ssl_write may perform partial writes -- we must check for these cases
          * and call the function again if necessary. */
         do {
-            ret = mbedtls_ssl_write(&ssl, request + bytes_written, 
+            ret = mbedtls_ssl_write(&ssl, (unsigned char *) request + bytes_written, 
                     line_length - bytes_written);
             if (ret <= 0) {
                 if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
         } while (bytes_written < line_length);
 
     /* Read the HTTP response. */
-    char buffer[BUFFER_SIZE + 1] = { 0 };
+    unsigned char buffer[BUFFER_SIZE + 1] = { 0 };
     while ((ret = mbedtls_ssl_read(&ssl, buffer, BUFFER_SIZE)) > 0) {
         fwrite(buffer, 1, ret, stdout);
     }

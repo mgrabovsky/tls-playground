@@ -6,25 +6,45 @@
 
 #include <gnutls/gnutls.h>
 
-#define HOST "www.example.com"
+#define DEFAULT_HOST "example.com"
 #define PORT "443"
 
-const char *request_lines[] = {
-    "GET / HTTP/1.1\r\n",
-    "Host: " HOST "\r\n",
-    "Connection: close\r\n",
-    "\r\n",
-    NULL
-};
+#define REQUEST_TEMPLATE    \
+    "GET / HTTP/1.1\r\n"    \
+    "Host: %s\r\n"          \
+    "Connection: close\r\n" \
+    "\r\n"
 
 static void fail(int error) {
     fprintf(stderr, "%s\n", gnutls_strerror(error));
     abort();
 }
 
-int main(void)
-{
+int main(int argc, char **argv) {
+    /* Final return value of the program. */
     int ret = 0;
+
+    /* The HTTP request string. */
+    char *request = NULL;
+    
+    /* Name of the host we're connecting to. */
+    const char *hostname = DEFAULT_HOST;
+
+    if (argc == 2) {
+        hostname = argv[1];
+    } else if (argc > 2) {
+        fprintf(stderr, "Invalid number of arguments. Expected zero or one.\n");
+        fprintf(stderr, "Usage: %s [hostname]\n", argv[0]);
+        return 1;
+    }
+
+    /* Build the request string from the template and supplied (or default) hostname.*/
+    if (asprintf(&request, REQUEST_TEMPLATE, hostname) < 0) {
+        request = NULL;
+        fprintf(stderr, "Error: Failed to allocate memory for request.\n");
+        return -1;
+    }
+
     gnutls_session_t session = NULL;
 
     if ((ret = gnutls_global_init()) < 0) {
@@ -43,6 +63,9 @@ int main(void)
     /* Free used resources. */
     if (session != NULL) {
         gnutls_deinit(session);
+    }
+    if (request != NULL) {
+        free(request);
     }
     gnutls_global_deinit();
 

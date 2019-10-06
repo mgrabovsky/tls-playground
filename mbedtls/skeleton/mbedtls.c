@@ -10,16 +10,14 @@
 #include <mbedtls/net.h>
 #include <mbedtls/ssl.h>
 
-#define HOST "www.example.com"
+#define DEFAULT_HOST "example.com"
 #define PORT "443"
 
-const char *request_lines[] = {
-    "GET / HTTP/1.1\r\n",
-    "Host: " HOST "\r\n",
-    "Connection: close\r\n",
-    "\r\n",
-    NULL
-};
+#define REQUEST_TEMPLATE    \
+    "GET / HTTP/1.1\r\n"    \
+    "Host: %s\r\n"          \
+    "Connection: close\r\n" \
+    "\r\n"
 
 static void fail(int error) {
     char buffer[200] = { 0 };
@@ -30,8 +28,30 @@ static void fail(int error) {
     abort();
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    /* Final return value of the program. */
     int ret = 0;
+
+    /* The HTTP request string. */
+    char *request = NULL;
+    
+    /* Name of the host we're connecting to. */
+    const char *hostname = DEFAULT_HOST;
+
+    if (argc == 2) {
+        hostname = argv[1];
+    } else if (argc > 2) {
+        fprintf(stderr, "Invalid number of arguments. Expected zero or one.\n");
+        fprintf(stderr, "Usage: %s [hostname]\n", argv[0]);
+        return 1;
+    }
+
+    /* Build the request string from the template and supplied (or default) hostname.*/
+    if (asprintf(&request, REQUEST_TEMPLATE, hostname) < 0) {
+        request = NULL;
+        fprintf(stderr, "Error: Failed to allocate memory for request.\n");
+        return -1;
+    }
 
     mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context drbg;
@@ -68,6 +88,10 @@ int main(void) {
     mbedtls_ssl_free(&ssl);
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
+
+    if (request != NULL) {
+        free(request);
+    }
 
     return 0;
 }

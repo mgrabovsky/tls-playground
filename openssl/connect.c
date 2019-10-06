@@ -106,14 +106,10 @@ int ocsp_callback(SSL *ssl, void *param) {
 int main(int argc, char **argv) {
     /* Final return value of the program. */
     int ret = 0;
-    /* SSL/TLS context. */
-    SSL_CTX *ctx = NULL;
-    /* SSL/TLS channel. */
-    SSL *ssl = NULL;
-    /* TCP/IP socket descriptor. */
-    int sock = -1;
+
     /* The HTTP request string. */
     char *request = NULL;
+    
     /* Name of the host we're connecting to. */
     const char *hostname = DEFAULT_HOST;
 
@@ -125,13 +121,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Build the request string from the template and supplied (or default) host
-     * name.
-     */
+    /* Build the request string from the template and supplied (or default) hostname.*/
     if (asprintf(&request, REQUEST_TEMPLATE, hostname) < 0) {
         request = NULL;
         CUSTOM_FAIL("Failed to allocate memory for request.");
     }
+
+    /* SSL/TLS context. */
+    SSL_CTX *ctx = NULL;
+    /* SSL/TLS channel. */
+    SSL *ssl = NULL;
+    /* TCP/IP socket descriptor. */
+    int sock = -1;
 
     /* No explicit initialisation is needed as of OpenSSL 1.1.0. */
 
@@ -208,7 +209,7 @@ int main(int argc, char **argv) {
         }
         X509_free(cert);
     }
-
+    
     /* Check if the certificate was was verified successfully. */
     if (SSL_get_verify_result(ssl) != X509_V_OK) {
         CUSTOM_FAIL("Could not verify server certificate.");

@@ -81,6 +81,7 @@ int main(int argc, char **argv) {
     mbedtls_x509_crt         certs;
     mbedtls_ssl_context      ssl;
 
+    /* Initialise the RNG, the network layer interface and the SSL/TLS structures. */
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&drbg);
     mbedtls_net_init(&net);
@@ -88,6 +89,7 @@ int main(int argc, char **argv) {
     mbedtls_x509_crt_init(&certs);
     mbedtls_ssl_init(&ssl);
 
+    /* Seed the random number generator. */
     MBEDTLS_CHECK(mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, NULL, 0));
 
     /* Connect to the server via TCP. */
@@ -129,24 +131,24 @@ int main(int argc, char **argv) {
 
     /* TODO: Check for certificate revocation. */
 
-    /* Send the HTTP request line by line. */
-        int line_length   = strlen(request);
-        int bytes_written = 0;
-        /* mbedtls_ssl_write may perform partial writes -- we must check for these cases
-         * and call the function again if necessary. */
-        do {
-            ret = mbedtls_ssl_write(&ssl, (unsigned char *) request + bytes_written, 
-                    line_length - bytes_written);
-            if (ret <= 0) {
-                if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
-                    ret != MBEDTLS_ERR_SSL_WANT_WRITE)
-                {
-                    MBEDTLS_FAIL(ret);
-                }
-            } else {
-                bytes_written += ret;
+    /* Send the HTTP request. */
+    int line_length   = strlen(request);
+    int bytes_written = 0;
+    /* mbedtls_ssl_write may perform partial writes -- we must check for these cases
+        * and call the function again if necessary. */
+    do {
+        ret = mbedtls_ssl_write(&ssl, (unsigned char *) request + bytes_written, 
+                line_length - bytes_written);
+        if (ret <= 0) {
+            if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
+                ret != MBEDTLS_ERR_SSL_WANT_WRITE)
+            {
+                MBEDTLS_FAIL(ret);
             }
-        } while (bytes_written < line_length);
+        } else {
+            bytes_written += ret;
+        }
+    } while (bytes_written < line_length);
 
     /* Read the HTTP response. */
     unsigned char buffer[BUFFER_SIZE + 1] = { 0 };

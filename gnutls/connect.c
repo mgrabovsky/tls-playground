@@ -193,8 +193,12 @@ int main(int argc, char **argv) {
 
     /* Read the HTTP response and output it onto the standard output. */
     char buffer[BUFFER_SIZE + 1] = { 0 };
-    while ((ret = gnutls_record_recv(session, buffer, BUFFER_SIZE)) > 0) {
-        fwrite(buffer, 1, ret, stdout);
+    while ((ret = gnutls_record_recv(session, buffer, BUFFER_SIZE)) > 0
+            || ret == GNUTLS_E_AGAIN || ret == GNUTLS_E_INTERRUPTED)
+    {
+        if (ret > 0) {
+            fwrite(buffer, 1, ret, stdout);
+        }
     }
 
     if (ret < 0) {

@@ -1,5 +1,5 @@
 /**
- * Skeleton for PA193 homework #3, target mbedTLS >= 2.13.0
+ * Skeleton for PA193 homework #3, target mbedTLS ~ 2.16.0
  */
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,5 +1,5 @@
 /**
- * Skeleton for PA193 homework #3, target GnuTLS >= 3.5.19
+ * Skeleton for PA193 homework #3, target GnuTLS ~ 3.6.5
  */
 #include <stdio.h>
 #include <stdlib.h>

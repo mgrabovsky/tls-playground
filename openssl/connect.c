@@ -71,32 +71,119 @@
     "Connection: close\r\n" \
     "\r\n"
 
+X509 *g_subject = NULL;
+X509 *g_issuer  = NULL;
+
+static int
+print_ocsp_summary(OCSP_BASICRESP * bs,
+    OCSP_CERTID *id, long nsec,
+    long maxage)
+{
+    int status, reason;
+
+    ASN1_GENERALIZEDTIME *rev, *thisupd, *nextupd;
+
+    BIO *out = BIO_new_fp(stderr, BIO_NOCLOSE);
+
+    if (!OCSP_resp_find_status(bs, id, &status, &reason,
+                               &rev, &thisupd, &nextupd))
+    {
+        fprintf(stderr, "ERROR: No Status found.\n");
+        goto end;
+    }
+
+    /* Check validity: if invalid write to output BIO so we know
+     * which response this refers to.
+     */
+    if (!OCSP_check_validity(thisupd, nextupd, nsec, maxage)) {
+        fprintf(stderr, "WARNING: Status times invalid.\n");
+        ERR_print_errors_fp(stderr);
+    }
+    fprintf(stderr, "%s\n", OCSP_cert_status_str(status));
+
+    fprintf(stderr, "\tThis Update: ");
+    ASN1_GENERALIZEDTIME_print(out, thisupd);
+    fprintf(stderr, "\n");
+
+    if (nextupd) {
+        fprintf(stderr, "\tNext Update: ");
+        ASN1_GENERALIZEDTIME_print(out, nextupd);
+        fprintf(stderr, "\n");
+    }
+    if (status != V_OCSP_CERTSTATUS_REVOKED) {
+        goto end;
+    }
+
+    if (reason != -1) {
+        fprintf(stderr, "\tReason: %s\n", OCSP_crl_reason_str(reason));
+    }
+
+    fprintf(stderr, "\tRevocation Time: ");
+    ASN1_GENERALIZEDTIME_print(out, rev);
+    fprintf(stderr, "\n");
+
+end:
+    BIO_free(out);
+
+    return 1;
+}
+
+/**
+ * Check the validity of OCSP response and revocation status of the certificate.
+ *
+ * Returns 1 on good status, 0 on error.
+ */
 int ocsp_callback(SSL *ssl, void *param) {
     UNUSED(param);
 
     /* Check for certificate revocation via OCSP stapling. */
     unsigned char *response_raw = NULL;
-    long response_len = SSL_get_tlsext_status_ocsp_resp(ssl,
-            &response_raw);
+    long response_len = SSL_get_tlsext_status_ocsp_resp(ssl, &response_raw);
     if (response_len == -1) {
         fprintf(stderr, "Server did not send OCSP response.\n");
-        /* TODO: Ideally, we should now either query the OCSP server directly or
-         * try CRL if available. */
-        OPENSSL_free(response_raw);
         return 1;
     }
 
     OCSP_RESPONSE *response = NULL;
     if ((response = d2i_OCSP_RESPONSE(NULL, (const unsigned char **)&response_raw,
-                    response_len)) == NULL)
+                                      response_len)) == NULL)
     {
         fprintf(stderr, "Could not parse OCSP response.\n");
         OPENSSL_free(response_raw);
-        return 1;
+        return 0;
     }
 
-    /* TODO: What next? Need to get certid from server certificate, then call
-     * OCSP_resp_find_status. */
+    OPENSSL_free(response_raw);
+    fprintf(stderr, "OCSP response received.\n");
+
+    int i = OCSP_response_status(response);
+    if (i != OCSP_RESPONSE_STATUS_SUCCESSFUL) {
+        fprintf(stderr, "OCSP responder failure.\n");
+        OPENSSL_free(response);
+        return 0;
+    }
+
+    OCSP_BASICRESP *basic_response = OCSP_response_get1_basic(response);
+    if (!basic_response) {
+        fprintf(stderr, "Could not parse OCSP response.\n");
+        OPENSSL_free(response);
+        return 0;
+    }
+
+    STACK_OF(OCSP_CERTID) *ids = sk_OCSP_CERTID_new_null();
+
+    if (!g_subject || !g_issuer) {
+        fprintf(stderr, "No subject or issuer identifed.\n");
+        OPENSSL_free(response);
+        return 0;
+    }
+
+    const EVP_MD *cert_id_md = EVP_sha1();
+    OCSP_CERTID *id = OCSP_cert_to_id(cert_id_md, g_subject, g_issuer);
+
+    print_ocsp_summary(basic_response, id, 5 * 60, -1);
+
+    sk_OCSP_CERTID_free(ids);
 
     OPENSSL_free(response);
 
@@ -154,6 +241,12 @@ int main(int argc, char **argv) {
     OPENSSL_CHECK(SSL_CTX_set_tlsext_status_type(ctx, TLSEXT_STATUSTYPE_ocsp));
     OPENSSL_CHECK(SSL_CTX_set_tlsext_status_cb(ctx, ocsp_callback));
 
+    {
+        /* Check CRLs of the whole certificate chain. */
+        //X509_VERIFY_PARAM *param = SSL_CTX_get0_param(ctx);
+        //OPENSSL_CHECK(X509_VERIFY_PARAM_set_flags(param, X509_V_FLAG_CRL_CHECK_ALL));
+    }
+
     /* Create TCP/IP socket and connect. */
     {
         BIO_ADDRINFO *result = NULL;
@@ -207,10 +300,11 @@ int main(int argc, char **argv) {
         if (cert == NULL) {
             CUSTOM_FAIL("Server did not send certificate -- will not connect.");
         }
-        X509_free(cert);
+        g_subject = cert;
+        //X509_free(cert);
     }
     
-    /* Check if the certificate was was verified successfully. */
+    /* Check if the certificate was verified successfully. */
     if (SSL_get_verify_result(ssl) != X509_V_OK) {
         CUSTOM_FAIL("Could not verify server certificate.");
     }
